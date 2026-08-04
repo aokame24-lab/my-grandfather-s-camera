@@ -1,0 +1,261 @@
+
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>かんたんガイド付きカメラ</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: sans-serif;
+      background-color: #121212;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    /* ヘッダー・案内テキスト */
+    header {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    .instruction {
+      font-size: 22px;
+      font-weight: bold;
+      color: #ffee55;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 8px 16px;
+      border-radius: 8px;
+    }
+
+    /* カメラビューポート */
+    .camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 500px;
+      aspect-ratio: 3 / 4;
+      background-color: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    video, canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* 四角いガイドライン */
+    .guide-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* 赤い点線枠 */
+    .guide-box {
+      width: 70%;
+      height: 60%;
+      border: 4px dashed #ff3333;
+      border-radius: 12px;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4); /* 枠の外側を暗くして強調 */
+    }
+
+    /* 操作エリア */
+    .controls {
+      width: 100%;
+      max-width: 500px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    /* 各種ボタン */
+    .btn {
+      width: 100%;
+      padding: 18px;
+      font-size: 22px;
+      font-weight: bold;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-shutter {
+      background-color: #ff4757;
+      color: white;
+      box-shadow: 0 6px 0 #b32d38;
+    }
+    .btn-shutter:active {
+      transform: translateY(4px);
+      box-shadow: 0 2px 0 #b32d38;
+    }
+
+    .btn-secondary {
+      background-color: #4b6584;
+      color: white;
+    }
+
+    .btn-download {
+      background-color: #2ed573;
+      color: white;
+    }
+
+    /* 撮影完了画面 */
+    .preview-container {
+      display: none;
+      width: 100%;
+      max-width: 500px;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .preview-img {
+      width: 100%;
+      border-radius: 16px;
+      border: 2px solid #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 案内ヘッダー -->
+  <header>
+    <div class="instruction" id="instruction">枠の中に入れて撮ってください</div>
+  </header>
+
+  <!-- カメラ撮影画面 -->
+  <div id="capture-section" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
+    <div class="camera-container">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="guide-overlay">
+        <div class="guide-box"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-shutter" id="snap-btn">📷 写真を撮る</button>
+      <button class="btn btn-secondary" id="switch-btn">🔄 カメラを切替</button>
+    </div>
+  </div>
+
+  <!-- 撮影後のプレビュー画面 -->
+  <div class="preview-container" id="preview-section">
+    <img id="photo-preview" class="preview-img" alt="撮影された写真">
+    <div class="controls">
+      <a id="download-link" class="btn btn-download" download="photo.jpg">💾 保存する</a>
+      <button class="btn btn-secondary" id="retry-btn">🔄 もう一度撮る</button>
+    </div>
+  </div>
+
+  <!-- 非表示のCanvas（撮影画像処理用） -->
+  <canvas id="canvas" style="display: none;"></canvas>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const snapBtn = document.getElementById('snap-btn');
+    const switchBtn = document.getElementById('switch-btn');
+    const retryBtn = document.getElementById('retry-btn');
+    const downloadLink = document.getElementById('download-link');
+    const photoPreview = document.getElementById('photo-preview');
+    
+    const captureSection = document.getElementById('capture-section');
+    const previewSection = document.getElementById('preview-section');
+    const instruction = document.getElementById('instruction');
+
+    let currentStream = null;
+    let facingMode = 'environment'; // スマホのアウトカメラを優先
+
+    // カメラの起動
+    async function startCamera() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
+      try {
+        const constraints = {
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        };
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = currentStream;
+      } catch (err) {
+        alert('カメラの起動に失敗しました。カメラのアクセス許可を確認してください。');
+        console.error(err);
+      }
+    }
+
+    // カメラ切り替え
+    switchBtn.addEventListener('click', () => {
+      facingMode = (facingMode === 'environment') ? 'user' : 'environment';
+      startCamera();
+    });
+
+    // 撮影処理
+    snapBtn.addEventListener('click', () => {
+      if (!video.videoWidth) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      // インカメラの場合は左右反転を解除して正しく描画
+      if (facingMode === 'user') {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // 画像データ化して表示
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      photoPreview.src = dataUrl;
+      downloadLink.href = dataUrl;
+
+      // 画面の切り替え
+      captureSection.style.display = 'none';
+      previewSection.style.display = 'flex';
+      instruction.innerText = 'きれいに撮れましたか？';
+    });
+
+    // 再撮影
+    retryBtn.addEventListener('click', () => {
+      previewSection.style.display = 'none';
+      captureSection.style.display = 'flex';
+      instruction.innerText = '枠の中に入れて撮ってください';
+    });
+
+    // 初回起動
+    startCamera();
+  </script>
+</body>
+</html>
